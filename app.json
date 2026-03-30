@@ -1,0 +1,22 @@
+{
+  "expo": {
+    "scheme": "acme",
+    "plugins": [
+      "expo-router",
+      "expo-notifications",
+      "@react-native-community/datetimepicker"
+    ],
+    "name": "ProdyAI",
+    "slug": "prodyai",
+    "owner": "neptune249",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3a8f1351-c043-4cba-be68-8dc80b6df797"
+      }
+    },
+    "android": {
+      "package": "com.masoom1970.ProdyAI"
+    }
+  }
+}

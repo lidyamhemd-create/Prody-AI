@@ -11,6 +11,7 @@ import SubtaskForm from '../../components/tasks/SubtaskForm';
 import BottomNavBar, { BOTTOM_NAV_TOTAL_HEIGHT } from '../../components/BottomNavBar';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import OfflineIndicator from '../../components/OfflineIndicator';
+import { colors } from '../../constants/theme';
 
 export default function TasksScreen() {
   const theme = useTheme();
@@ -163,22 +164,30 @@ export default function TasksScreen() {
   };
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={styles.root}>
+      {/* Header */}
       <View style={styles.headerRow}>
-        <Text style={styles.headerTitle}>Tasks</Text>
-        <IconButton icon="refresh" onPress={onRefresh} />
+        <View>
+          <Text style={styles.headerLabel}>DAILY</Text>
+          <Text style={styles.headerTitle}>Quest Log</Text>
+        </View>
+        <IconButton icon="refresh" onPress={onRefresh} iconColor={colors.textMuted} />
       </View>
+
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{ paddingBottom: BOTTOM_NAV_TOTAL_HEIGHT + 60 }}
+        contentContainerStyle={{ paddingBottom: BOTTOM_NAV_TOTAL_HEIGHT + 80 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.gold} />
         }
       >
         {loading ? (
-          <Text style={styles.loadingText}>Loading tasks...</Text>
+          <Text style={styles.loadingText}>Loading quests...</Text>
         ) : tasks.length === 0 ? (
-          <Text style={styles.emptyText}>No tasks yet. Add one to get started!</Text>
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No active tasks</Text>
+            <Text style={styles.emptyText}>Tap + to add your first quest</Text>
+          </View>
         ) : (
           <TaskList
             tasks={tasks}
@@ -191,49 +200,35 @@ export default function TasksScreen() {
           />
         )}
       </ScrollView>
+
       <FAB
         icon="plus"
         style={fabAboveNavBarStyle}
         onPress={() => setShowAddDialog(true)}
+        color={colors.background}
       />
+
       <Portal>
-        <Dialog
-          visible={showAddDialog}
-          onDismiss={() => setShowAddDialog(false)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Add New Task</Dialog.Title>
+        <Dialog visible={showAddDialog} onDismiss={() => setShowAddDialog(false)} style={styles.dialog}>
+          <Dialog.Title style={styles.dialogTitle}>Add New Task</Dialog.Title>
           <Dialog.Content>
             <ScrollView style={styles.dialogScrollView} showsVerticalScrollIndicator={false}>
-              <TaskForm
-                onSubmit={handleAddTask}
-                onCancel={() => setShowAddDialog(false)}
-              />
+              <TaskForm onSubmit={handleAddTask} onCancel={() => setShowAddDialog(false)} />
             </ScrollView>
           </Dialog.Content>
         </Dialog>
-        <Dialog
-          visible={!!editingTask}
-          onDismiss={() => setEditingTask(null)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Edit Task</Dialog.Title>
+
+        <Dialog visible={!!editingTask} onDismiss={() => setEditingTask(null)} style={styles.dialog}>
+          <Dialog.Title style={styles.dialogTitle}>Edit Task</Dialog.Title>
           <Dialog.Content>
             <ScrollView style={styles.dialogScrollView} showsVerticalScrollIndicator={false}>
-              <TaskForm
-                task={editingTask || undefined}
-                onSubmit={handleEditTask}
-                onCancel={() => setEditingTask(null)}
-              />
+              <TaskForm task={editingTask || undefined} onSubmit={handleEditTask} onCancel={() => setEditingTask(null)} />
             </ScrollView>
           </Dialog.Content>
         </Dialog>
-        <Dialog
-          visible={showSubtaskDialog}
-          onDismiss={() => setShowSubtaskDialog(false)}
-          style={styles.dialog}
-        >
-          <Dialog.Title>Add Subtask</Dialog.Title>
+
+        <Dialog visible={showSubtaskDialog} onDismiss={() => setShowSubtaskDialog(false)} style={styles.dialog}>
+          <Dialog.Title style={styles.dialogTitle}>Add Subtask</Dialog.Title>
           <Dialog.Content>
             <ScrollView style={styles.dialogScrollView} showsVerticalScrollIndicator={false}>
               <SubtaskForm
@@ -245,6 +240,7 @@ export default function TasksScreen() {
           </Dialog.Content>
         </Dialog>
       </Portal>
+
       <BottomNavBar />
       <OfflineIndicator />
     </View>
@@ -252,62 +248,66 @@ export default function TasksScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  backButton: {
-    margin: 16,
-    marginBottom: 0,
+    backgroundColor: colors.background,
   },
   scrollView: {
     flex: 1,
-  },
-  loadingText: {
-    textAlign: 'center',
-    marginTop: 20,
-    fontSize: 16,
-    color: '#666',
-  },
-  emptyText: {
-    textAlign: 'center',
-    marginTop: 20,
-    fontSize: 16,
-    color: '#666',
-  },
-  fab: {
-    position: 'absolute',
-    margin: 16,
-    right: 0,
-    bottom: 0,
-  },
-  dialog: {
-    backgroundColor: '#fff',
-  },
-  dialogScrollView: {
-    maxHeight: 600,
-  },
-  form: {
-    marginBottom: 20,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#ccc',
-    padding: 10,
-    marginBottom: 10,
   },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: 32,
-    paddingBottom: 8,
+    paddingTop: 52,
+    paddingBottom: 14,
+    borderBottomWidth: 0.5,
+    borderBottomColor: colors.surfaceHighlight,
+  },
+  headerLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 2,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#222',
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  loadingText: {
+    textAlign: 'center',
+    marginTop: 40,
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  emptyState: {
+    alignItems: 'center',
+    paddingTop: 60,
+    paddingHorizontal: 20,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginBottom: 6,
+  },
+  emptyText: {
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+  dialog: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+  },
+  dialogTitle: {
+    color: colors.textPrimary,
+  },
+  dialogScrollView: {
+    maxHeight: 600,
   },
 }); 
 
@@ -315,5 +315,6 @@ const fabAboveNavBarStyle = {
   position: 'absolute' as const,
   right: 24,
   bottom: BOTTOM_NAV_TOTAL_HEIGHT + 20,
+  backgroundColor: colors.gold,
   zIndex: 200,
 }; 

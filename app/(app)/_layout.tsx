@@ -40,6 +40,18 @@ export default function AppLayout() {
           }}
         />
         <Tabs.Screen
+          name="habits"
+          options={{
+            title: 'Habits',
+          }}
+        />
+        <Tabs.Screen
+          name="statistics"
+          options={{
+            title: 'Shelf',
+          }}
+        />
+        <Tabs.Screen
           name="history"
           options={{
             title: 'History',

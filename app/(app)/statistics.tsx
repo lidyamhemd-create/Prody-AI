@@ -1,191 +1,247 @@
-import React from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, StyleSheet, ScrollView } from 'react-native';
-import { Text, Card, IconButton } from 'react-native-paper';
-// import a chart library if available, else use a placeholder
-// import { LineChart } from 'react-native-chart-kit';
+import { Text } from 'react-native-paper';
 import BottomNavBar, { BOTTOM_NAV_TOTAL_HEIGHT } from '../../components/BottomNavBar';
 import { useAuth } from '../../hooks/useAuth';
 import { focusService } from '../../services/supabase/focus';
 import { offlineTaskService } from '../../services/offline/taskService';
-import { habitService } from '../../services/supabase/habitService';
-import { useEffect, useState } from 'react';
 import { useFocusEffect } from 'expo-router';
-import { supabase } from '../../services/supabase/supabase';
+import { colors } from '../../constants/theme';
 
-// Removed mock placeholders; pulling real data
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+const TROPHY_ICONS = ['🏆','🥇','🎓','🚀','💎','⭐','🎯','🔥','🏅','👑'];
 
-export default function StatisticsScreen() {
+function getTrophy(index: number): string {
+  return TROPHY_ICONS[index % TROPHY_ICONS.length];
+}
+
+function fmtDate(s: string): string {
+  try {
+    return new Date(s).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return s; }
+}
+
+function fmtMins(m: number) {
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  return h > 0 ? `${h}h ${min}m` : `${min}m`;
+}
+
+// ─── Progress Bar ─────────────────────────────────────────────────────────────
+function Bar({ value, max, color, height = 5 }: { value: number; max: number; color: string; height?: number }) {
+  const pct = max === 0 ? 0 : Math.min(100, Math.round((value / max) * 100));
+  return (
+    <View style={{ backgroundColor: colors.surfaceHighlight, borderRadius: 99, height, overflow: 'hidden', width: '100%' }}>
+      <View style={{ width: `${pct}%`, height: '100%', backgroundColor: color, borderRadius: 99 }} />
+    </View>
+  );
+}
+
+// ─── Main Screen ──────────────────────────────────────────────────────────────
+export default function ShelfScreen() {
   const { user } = useAuth();
-  const [focusSessions, setFocusSessions] = useState([]);
-  const [completedTasks, setCompletedTasks] = useState([]);
-  const [failedTasks, setFailedTasks] = useState([]);
-  const [allTasks, setAllTasks] = useState([]);
-  const [habits, setHabits] = useState<any[]>([]);
-  const [habitCounts, setHabitCounts] = useState<Record<string, number>>({});
+  const [completedTasks, setCompletedTasks] = useState<any[]>([]);
+  const [allTasks, setAllTasks] = useState<any[]>([]);
+  const [focusStats, setFocusStats] = useState({ total_sessions: 0, total_duration: 0, completion_rate: 0 });
 
-  // Centralized loader
-  const loadData = React.useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!user) return;
-    const [sessions, all, userHabits] = await Promise.all([
-      focusService.getSessions(user.id),
+    const [all, stats] = await Promise.all([
       offlineTaskService.getTasks(user.id),
-      habitService.getHabits(user.id),
+      focusService.getStats(user.id),
     ]);
-    setFocusSessions(sessions as any);
-    setAllTasks(all as any);
-    // Derive completed/failed from offline tasks
-    const comp = (all as any).filter((t: any) => t.status === 'completed');
-    const fail = (all as any).filter((t: any) => t.status === 'failed');
-    setCompletedTasks(comp);
-    setFailedTasks(fail);
-    setHabits(userHabits as any);
-    const ids = (userHabits as any).map((h: any) => h.id);
-    if (ids.length > 0) {
-      const history = await habitService.getHabitHistoryByHabitIds(ids);
-      const counts: Record<string, number> = {};
-      history.forEach((row: any) => {
-        counts[row.habit_id] = (counts[row.habit_id] || 0) + (row.value || 0);
-      });
-      setHabitCounts(counts);
-    } else {
-      setHabitCounts({});
-    }
+    setAllTasks(all);
+    setCompletedTasks(all.filter((t: any) => t.status === 'completed'));
+    setFocusStats(stats as any);
   }, [user]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
+  useFocusEffect(useCallback(() => { loadData(); }, [loadData]));
 
-  // Refresh on screen focus
-  useFocusEffect(React.useCallback(() => {
-    loadData();
-    return () => {};
-  }, [loadData]));
-
-  // Realtime subscriptions for immediate updates
-  useEffect(() => {
-    if (!user) return;
-    const channel = supabase
-      .channel('stats_realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'habits', filter: `user_id=eq.${user.id}` }, loadData)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'habit_history' }, loadData)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [user, loadData]);
+  const failedCount = allTasks.filter((t: any) => t.status === 'failed').length;
+  const activeCount = allTasks.filter((t: any) => t.status !== 'completed' && t.status !== 'failed').length;
+  const completionRate = allTasks.length > 0
+    ? Math.round((completedTasks.length / allTasks.length) * 100)
+    : 0;
+  const focusMinutes = Math.round(focusStats.total_duration / 60);
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fafaff', paddingBottom: BOTTOM_NAV_TOTAL_HEIGHT }}>
-      <ScrollView contentContainerStyle={{ padding: 16 }}>
-        <Text style={styles.header}>Statistics</Text>
-        <Text style={styles.subheader}>Your productivity overview</Text>
-        {/* Habit summary - horizontal scrollable */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingVertical: 4 }}>
-          <View style={{ flexDirection: 'row' }}>
-            {habits.map((h: any) => (
-              <Card key={h.id} style={[styles.habitCard, { marginRight: 12 }]}> 
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '100%' }}>
-                  <Text style={{ fontSize: 28 }}>{h.icon || '🧩'}</Text>
-                  <IconButton icon="delete" onPress={async () => { await habitService.deleteHabit(h.id); const updated = await habitService.getHabits(user!.id); setHabits(updated as any); }} size={18} style={{ margin: 0 }} />
-                </View>
-                <Text style={{ fontWeight: 'bold', marginTop: 4 }} numberOfLines={1}>{h.title}</Text>
-                <Text style={{ color: '#888', fontSize: 12 }}>+{habitCounts[h.id] || 0} times</Text>
-              </Card>
-            ))}
+    <View style={styles.root}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={{ padding: 20, paddingBottom: BOTTOM_NAV_TOTAL_HEIGHT + 40 }}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerLabel}>ACHIEVEMENTS</Text>
+          <Text style={styles.headerTitle}>Trophy Shelf</Text>
+          <Text style={styles.headerSub}>Every completed quest lives here forever.</Text>
+        </View>
+
+        {/* Stats summary row */}
+        <View style={styles.statsRow}>
+          {[
+            { val: String(completedTasks.length), label: 'completed', color: colors.green },
+            { val: `${completionRate}%`, label: 'rate', color: colors.gold },
+            { val: fmtMins(focusMinutes), label: 'focus time', color: colors.blue },
+            { val: String(failedCount), label: 'failed', color: colors.error },
+          ].map(({ val, label, color }) => (
+            <View key={label} style={styles.statCard}>
+              <Text style={[styles.statVal, { color }]}>{val}</Text>
+              <Text style={styles.statLabel}>{label}</Text>
+            </View>
+          ))}
+        </View>
+
+        {/* Completion bar */}
+        <View style={styles.rateCard}>
+          <View style={styles.rateRow}>
+            <Text style={styles.rateLabel}>Overall completion rate</Text>
+            <Text style={[styles.rateVal, { color: colors.green }]}>{completionRate}%</Text>
           </View>
-        </ScrollView>
-        {/* Completion rate */}
-        <Card style={styles.chartCard}>
-          <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Tasks Completion Rate</Text>
-          {(() => {
-            const total = allTasks.length || 0;
-            const completed = completedTasks.length || 0;
-            const rate = total > 0 ? Math.round((completed / total) * 100) : 0;
-            return (
-              <View style={{ height: 80, justifyContent: 'center' }}>
-                <Text style={{ fontSize: 28, fontWeight: 'bold' }}>{rate}%</Text>
-                <Text style={{ color: '#888', fontSize: 12 }}>{completed} of {total} tasks completed</Text>
+          <Bar value={completedTasks.length} max={allTasks.length} color={colors.green} height={6} />
+          <Text style={styles.rateSub}>{completedTasks.length} of {allTasks.length} total tasks</Text>
+        </View>
+
+        {/* Trophy grid */}
+        {completedTasks.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyIcon}>🏆</Text>
+            <Text style={styles.emptyTitle}>Your shelf is empty — for now.</Text>
+            <Text style={styles.emptyText}>Complete a task to earn your first trophy.</Text>
+          </View>
+        ) : (
+          <>
+            {/* Trophy icons grid */}
+            <View style={styles.trophyGrid}>
+              {completedTasks.map((t, i) => (
+                <View key={t.id} style={styles.trophyIcon} title={t.title}>
+                  <Text style={{ fontSize: 28 }}>{getTrophy(i)}</Text>
+                  <Text style={styles.trophyIconLabel} numberOfLines={1}>
+                    {t.title?.split(' ').slice(0, 2).join(' ')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Completed task list */}
+            <Text style={styles.sectionLabel}>COMPLETED QUESTS</Text>
+            {completedTasks.slice().reverse().map((task, i) => (
+              <View key={task.id} style={styles.trophyCard}>
+                <Text style={styles.trophyCardIcon}>{getTrophy(completedTasks.length - 1 - i)}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.trophyCardTitle}>{task.title}</Text>
+                  {task.description ? (
+                    <Text style={styles.trophyCardDesc} numberOfLines={2}>{task.description}</Text>
+                  ) : null}
+                  {task.updated_at && (
+                    <Text style={[styles.trophyCardDate, { color: colors.green }]}>
+                      Completed {fmtDate(task.updated_at)}
+                    </Text>
+                  )}
+                </View>
+                <Text style={styles.trophyCardCheck}>✓</Text>
               </View>
-            );
-          })()}
-        </Card>
-        {/* History Section */}
-        <Card style={styles.historyCard}>
-          <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>History</Text>
-          {focusSessions.length === 0 && completedTasks.length === 0 && failedTasks.length === 0 && <Text style={{ color: '#888' }}>No history yet.</Text>}
-          {focusSessions.map(session => (
-            <View key={session.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 18, marginRight: 8 }}>⏱️</Text>
-              <View>
-                <Text style={{ fontWeight: 'bold' }}>Focus Session</Text>
-                <Text style={{ color: '#888', fontSize: 12 }}>{session.notes || 'No notes'} - {session.start_time.slice(0, 10)}</Text>
-                <Text style={{ color: '#aaa', fontSize: 11 }}>{session.start_time.slice(0, 10)}</Text>
+            ))}
+          </>
+        )}
+
+        {/* Focus sessions section */}
+        {focusStats.total_sessions > 0 && (
+          <View style={styles.focusSummary}>
+            <Text style={styles.sectionLabel}>FOCUS SUMMARY</Text>
+            <View style={styles.focusRow}>
+              <View style={styles.focusCard}>
+                <Text style={[styles.focusVal, { color: colors.green }]}>{focusStats.total_sessions}</Text>
+                <Text style={styles.focusLabel}>sessions</Text>
+              </View>
+              <View style={styles.focusCard}>
+                <Text style={[styles.focusVal, { color: colors.blue }]}>{fmtMins(focusMinutes)}</Text>
+                <Text style={styles.focusLabel}>total focus</Text>
+              </View>
+              <View style={styles.focusCard}>
+                <Text style={[styles.focusVal, { color: colors.gold }]}>
+                  {Math.round(focusStats.completion_rate ?? 0)}%
+                </Text>
+                <Text style={styles.focusLabel}>session rate</Text>
               </View>
             </View>
-          ))}
-          {completedTasks.map(task => (
-            <View key={task.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 18, marginRight: 8 }}>✅</Text>
-              <View>
-                <Text style={{ fontWeight: 'bold', color: 'green' }}>Task Completed</Text>
-                <Text style={{ color: '#888', fontSize: 12 }}>{task.title} - {task.updated_at.slice(0, 10)}</Text>
-                <Text style={{ color: '#aaa', fontSize: 11 }}>{task.updated_at.slice(0, 10)}</Text>
-              </View>
-            </View>
-          ))}
-          {failedTasks.map(task => (
-            <View key={task.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-              <Text style={{ fontSize: 18, marginRight: 8 }}>❌</Text>
-              <View>
-                <Text style={{ fontWeight: 'bold', color: 'red' }}>Task Failed</Text>
-                <Text style={{ color: '#888', fontSize: 12 }}>{task.title} - {task.updated_at.slice(0, 10)}</Text>
-                <Text style={{ color: '#aaa', fontSize: 11 }}>{task.updated_at.slice(0, 10)}</Text>
-              </View>
-            </View>
-          ))}
-        </Card>
-        {/* Add more analytics as needed */}
+          </View>
+        )}
       </ScrollView>
+
       <BottomNavBar />
     </View>
   );
 }
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  header: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginBottom: 8,
+  root: { flex: 1, backgroundColor: colors.background },
+  scroll: { flex: 1 },
+
+  header: { marginBottom: 20, paddingTop: 32 },
+  headerLabel: { fontSize: 10, color: colors.textMuted, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 2 },
+  headerTitle: { fontSize: 22, fontWeight: '700', color: colors.textPrimary },
+  headerSub: { fontSize: 10, color: colors.textMuted, marginTop: 3 },
+
+  // Stats row
+  statsRow: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  statCard: {
+    flex: 1, backgroundColor: colors.surface, borderRadius: 10,
+    paddingVertical: 10, borderWidth: 0.5, borderColor: colors.border, alignItems: 'center',
   },
-  subheader: {
-    fontSize: 14,
-    color: '#888',
-    marginBottom: 16,
+  statVal: { fontSize: 14, fontWeight: '700' },
+  statLabel: { fontSize: 8, color: colors.textMuted, marginTop: 2 },
+
+  // Completion rate card
+  rateCard: {
+    backgroundColor: colors.surface, borderRadius: 12, borderWidth: 0.5,
+    borderColor: colors.border, padding: 14, marginBottom: 20,
   },
-  habitRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 16,
+  rateRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  rateLabel: { fontSize: 12, color: colors.textSecondary },
+  rateVal: { fontSize: 14, fontWeight: '700' },
+  rateSub: { fontSize: 10, color: colors.textMuted, marginTop: 6 },
+
+  // Empty state
+  emptyState: { alignItems: 'center', paddingVertical: 48 },
+  emptyIcon: { fontSize: 48, marginBottom: 12 },
+  emptyTitle: { fontSize: 14, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 },
+  emptyText: { fontSize: 12, color: colors.textMuted, textAlign: 'center' },
+
+  // Trophy grid
+  trophyGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: 10,
+    backgroundColor: colors.surface, borderRadius: 14,
+    borderWidth: 0.5, borderColor: colors.border,
+    padding: 16, marginBottom: 20,
   },
-  habitCard: {
-    width: 140,
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    elevation: 2,
+  trophyIcon: { alignItems: 'center', width: 52, gap: 4 },
+  trophyIconLabel: { fontSize: 8, color: colors.textMuted, textAlign: 'center' },
+
+  // Section label
+  sectionLabel: { fontSize: 10, color: colors.textMuted, letterSpacing: 2, marginBottom: 10 },
+
+  // Trophy card (completed task list)
+  trophyCard: {
+    backgroundColor: colors.surface, borderRadius: 12, borderWidth: 0.5,
+    borderColor: colors.border, padding: 14, marginBottom: 8,
+    flexDirection: 'row', alignItems: 'center', gap: 12,
   },
-  chartCard: {
-    marginBottom: 16,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    elevation: 2,
+  trophyCardIcon: { fontSize: 28 },
+  trophyCardTitle: { fontSize: 13, fontWeight: '600', color: colors.textPrimary, marginBottom: 2 },
+  trophyCardDesc: { fontSize: 11, color: colors.textMuted, marginBottom: 4 },
+  trophyCardDate: { fontSize: 10, fontWeight: '500' },
+  trophyCardCheck: { fontSize: 16, color: colors.green, fontWeight: '700' },
+
+  // Focus summary
+  focusSummary: { marginTop: 8 },
+  focusRow: { flexDirection: 'row', gap: 8 },
+  focusCard: {
+    flex: 1, backgroundColor: colors.surface, borderRadius: 10, borderWidth: 0.5,
+    borderColor: colors.border, paddingVertical: 12, alignItems: 'center',
   },
-  historyCard: {
-    marginBottom: 16,
-    padding: 16,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    elevation: 2,
-  },
-}); 
+  focusVal: { fontSize: 16, fontWeight: '700' },
+  focusLabel: { fontSize: 9, color: colors.textMuted, marginTop: 2 },
+});

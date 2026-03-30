@@ -1,206 +1,130 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, StyleSheet, ScrollView, Image, FlatList, TouchableOpacity, RefreshControl } from 'react-native';
-import { Text, Card, Button, useTheme, IconButton, Avatar, Modal, Portal, FAB } from 'react-native-paper';
+import {
+  View, StyleSheet, ScrollView, TouchableOpacity,
+  RefreshControl, Modal, Pressable,
+} from 'react-native';
+import { Text, FAB, Portal } from 'react-native-paper';
 import { useAuth } from '../../hooks/useAuth';
 import { useRouter, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { offlineTaskService } from '../../services/offline/taskService';
 import { Task } from '../../types/task';
 import BottomNavBar, { BOTTOM_NAV_TOTAL_HEIGHT } from '../../components/BottomNavBar';
 import TaskCardWithSubtasks from '../../components/tasks/TaskCardWithSubtasks';
-import Animated, { useAnimatedStyle, withSpring } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { focusService } from '../../services/supabase/focus';
-import { Animated as RNAnimated } from 'react-native';
-import { StyleSheet as RNStyleSheet } from 'react-native';
 import OfflineIndicator from '../../components/OfflineIndicator';
-import HamburgerMenu from '../../components/HamburgerMenu';
 import Sidebar from '../../components/Sidebar';
 import UserAvatar from '../../components/UserAvatar';
-import { habitService } from '../../services/supabase/habitService';
-import { Habit } from '../../types/habit';
+import { colors } from '../../constants/theme';
 
-// Activity mapping for display
-const ACTIVITY_OPTIONS = [
-  // Most frequently used activities first
-  { key: 'exercise', label: 'Exercise', emoji: '🏋️' },
-  { key: 'reading', label: 'Reading', emoji: '📖' },
-  { key: 'meditation', label: 'Meditation', emoji: '🧘' },
-  { key: 'working', label: 'Working', emoji: '💻' },
-  { key: 'study', label: 'Study', emoji: '📚' },
-  { key: 'writing', label: 'Writing', emoji: '📝' },
-  { key: 'jogging', label: 'Jogging', emoji: '🏃' },
-  { key: 'cooking', label: 'Cooking', emoji: '👨‍🍳' },
-  { key: 'guitar', label: 'Guitar', emoji: '🎸' },
-  { key: 'painting', label: 'Painting', emoji: '🎨' },
-  { key: 'gaming', label: 'Gaming', emoji: '🎮' },
-  { key: 'shopping', label: 'Shopping', emoji: '🛍️' },
-  { key: 'party', label: 'Party', emoji: '🎉' },
-  { key: 'trading', label: 'Trading', emoji: '📊' },
-  { key: 'loving', label: 'Loving', emoji: '❤️' },
-  { key: 'drink', label: 'Drink', emoji: '💧' },
-];
+// ─── XP helpers ────────────────────────────────────────────────────────────────
+const XP_PER_TASK = 10;
+const XP_PER_LEVEL = 100;
 
-const getPriorityColor = (priority?: number) => {
-  switch (priority) {
-    case 1:
-      return '#4CAF50'; // Low - green
-    case 2:
-      return '#FFC107'; // Medium - orange
-    case 3:
-      return '#F44336'; // High - red
-    case 4:
-      return '#9C27B0'; // Urgent - purple
-    default:
-      return '#E0E0E0'; // Default/unspecified - grey
-  }
+function getXPInfo(completedCount: number) {
+  const totalXP = completedCount * XP_PER_TASK;
+  const level = Math.floor(totalXP / XP_PER_LEVEL) + 1;
+  const xpInLevel = totalXP % XP_PER_LEVEL;
+  return { totalXP, level, xpInLevel };
+}
+
+// ─── Priority helpers ───────────────────────────────────────────────────────────
+const PRIORITY_CONFIG: Record<number, { color: string; label: string }> = {
+  1: { color: colors.green,  label: 'low' },
+  2: { color: colors.gold,   label: 'medium' },
+  3: { color: colors.error,  label: 'high' },
+  4: { color: colors.purple, label: 'urgent' },
 };
+const getPriority = (p?: number) => PRIORITY_CONFIG[p ?? 1] ?? PRIORITY_CONFIG[1];
 
-const formatTime = (iso: string | undefined) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  let h = d.getHours();
-  const m = d.getMinutes().toString().padStart(2, '0');
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${h}:${m} ${ampm}`;
-};
+// ─── Date helpers ───────────────────────────────────────────────────────────────
+function parseDate(s: string): Date {
+  if (s.includes('T')) return new Date(s);
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d);
+}
 
-// Helper function to parse date consistently
-const parseDate = (dateString: string): Date => {
-  if (!dateString) {
-    throw new Error('Date string is empty or undefined');
-  }
-  
-  if (dateString.includes('T')) {
-    // ISO string format (old format)
-    return new Date(dateString);
-  } else {
-    // Date string format (YYYY-MM-DD, new format)
-    const parts = dateString.split('-');
-    if (parts.length !== 3) {
-      throw new Error(`Invalid date format: ${dateString}`);
-    }
-    const [year, month, day] = parts.map(Number);
-    if (isNaN(year) || isNaN(month) || isNaN(day)) {
-      throw new Error(`Invalid date components: ${dateString}`);
-    }
-    return new Date(year, month - 1, day);
-  }
-};
-
-// Helper function to check if a date is today
-const isToday = (dateString: string): boolean => {
+function isToday(s: string): boolean {
   try {
-    const taskDate = parseDate(dateString);
-    const today = new Date();
-    
-    // Reset both dates to start of day for comparison
-    const taskDateOnly = new Date(taskDate.getFullYear(), taskDate.getMonth(), taskDate.getDate());
-    const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    
-    const result = taskDateOnly.getTime() === todayOnly.getTime();
-    
-    // Debug logging
-    console.log(`isToday debug:`, {
-      originalDate: dateString,
-      parsedTaskDate: taskDate,
-      taskDateOnly: taskDateOnly,
-      today: today,
-      todayOnly: todayOnly,
-      result: result
-    });
-    
-    return result;
-  } catch (error) {
-    console.error('Error parsing date for isToday check:', error);
-    return false;
-  }
-};
+    const t = parseDate(s);
+    const n = new Date();
+    return t.getFullYear() === n.getFullYear() &&
+           t.getMonth() === n.getMonth() &&
+           t.getDate() === n.getDate();
+  } catch { return false; }
+}
 
+function daysUntil(s: string): number {
+  const diff = parseDate(s).getTime() - Date.now();
+  return Math.ceil(diff / 86400000);
+}
+
+function fmtFocusTime(minutes: number) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+// ─── Progress Bar ───────────────────────────────────────────────────────────────
+function Bar({ value, max, color, height = 5 }: { value: number; max: number; color: string; height?: number }) {
+  const pct = max === 0 ? 0 : Math.min(100, Math.round((value / max) * 100));
+  return (
+    <View style={{ backgroundColor: colors.surfaceHighlight, borderRadius: 99, height, overflow: 'hidden', width: '100%' }}>
+      <View style={{ width: `${pct}%`, height: '100%', backgroundColor: color, borderRadius: 99 }} />
+    </View>
+  );
+}
+
+// ─── Deadline Pill ──────────────────────────────────────────────────────────────
+function DeadlinePill({ deadline }: { deadline?: string }) {
+  if (!deadline) return null;
+  const days = daysUntil(deadline);
+  const color = days <= 3 ? colors.error : days <= 14 ? colors.gold : colors.textMuted;
+  return (
+    <View style={{ backgroundColor: color + '22', borderRadius: 99, paddingHorizontal: 7, paddingVertical: 2 }}>
+      <Text style={{ fontSize: 9, color, fontWeight: '600' }}>{days}d left</Text>
+    </View>
+  );
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────────
 export default function DashboardScreen() {
   const { session, loading: authLoading, user } = useAuth();
   const router = useRouter();
   const params = useLocalSearchParams();
-  const theme = useTheme();
+
   const [sidebarVisible, setSidebarVisible] = useState(false);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
-  const [showModal, setShowModal] = useState(false);
-  const [refreshFlag, setRefreshFlag] = useState(false);
   const [allActiveTasks, setAllActiveTasks] = useState<Task[]>([]);
-  const [taskOrder, setTaskOrder] = useState<string[]>([]); // store task IDs for custom order
-  const [selectedTaskToSwap, setSelectedTaskToSwap] = useState<number | null>(null); // index of first selected task
-  const [focusStats, setFocusStats] = useState({ total_duration: 0 });
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [streak, setStreak] = useState(0);
+  const [refreshFlag, setRefreshFlag] = useState(false);
+  const [focusStats, setFocusStats] = useState({ total_duration: 0 });
   const [completedCount, setCompletedCount] = useState(0);
   const [failedCount, setFailedCount] = useState(0);
+  const [streak, setStreak] = useState(0);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
-  // Habits temporarily disabled
-  // const [habits, setHabits] = useState<Habit[]>([]);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [taskOrder, setTaskOrder] = useState<string[]>([]);
+  const [selectedTaskToSwap, setSelectedTaskToSwap] = useState<number | null>(null);
 
-  // Listen for refresh parameter changes from chat
-  useEffect(() => {
-    if (params.refresh) {
-      console.log('Dashboard: Refresh parameter detected:', params.refresh);
-      fetchTasks();
-    }
-  }, [params.refresh]);
-
-  // Listen for reset parameter changes from profile
-  useEffect(() => {
-    if (params.reset === 'true') {
-      console.log('Dashboard: Reset parameter detected, refreshing all data');
-      setStreak(0);
-      setCompletedCount(0);
-      setFailedCount(0);
-      setFocusStats({ total_duration: 0 });
-      fetchTasks();
-      // Clear the reset parameter
-      router.setParams({ reset: undefined });
-    }
-  }, [params.reset]);
-
-  // Fetch tasks for today
+  // ── Data fetching ─────────────────────────────────────────────────────────────
   const fetchTasks = useCallback(async () => {
     if (!user) return;
-    console.log('Dashboard: fetchTasks called');
     setLoading(true);
     try {
-      const allTasks = await offlineTaskService.getTasks(user.id);
-      console.log('Dashboard: All tasks fetched:', allTasks.length, 'tasks');
-      console.log('Dashboard: User ID:', user.id);
-      
-      // Filter for today's tasks that are not completed or failed (for events section)
-      // A task is considered "today's event" if it has a deadline for today OR if it's marked for today
-      const todaysTasks = allTasks.filter(task => {
-        if (task.status === 'completed' || task.status === 'failed') return false;
-        
-        // If task has a deadline, check if it's today
-        if (task.deadline) {
-          const isTodayTask = isToday(task.deadline);
-          console.log(`Dashboard: Task "${task.title}" deadline: ${task.deadline}, isToday: ${isTodayTask}`);
-          return isTodayTask;
-        }
-        
-        // If no deadline but task is active, consider it for today's events
-        // This allows tasks without specific dates to still show up
-        console.log(`Dashboard: Task "${task.title}" has no deadline, including in today's events`);
-        return true;
-      });
-      
-      console.log('Dashboard: Today\'s tasks:', todaysTasks.length);
-      setTasks(todaysTasks);
-      
-      // All active tasks (not completed/failed) - this is what should be shown in the main task list
-      const activeTasks = allTasks.filter(task => task.status !== 'completed' && task.status !== 'failed');
-      console.log('Dashboard: Active tasks:', activeTasks.length);
-      console.log('Dashboard: Task statuses:', activeTasks.map(t => ({ title: t.title, status: t.status, deadline: t.deadline })));
-      setAllActiveTasks(activeTasks);
-    } catch (e) {
-      console.error('Dashboard: Error fetching tasks:', e);
-      setTasks([]);
+      const all = await offlineTaskService.getTasks(user.id);
+      const active = all.filter(t => t.status !== 'completed' && t.status !== 'failed');
+      setAllActiveTasks(active);
+
+      let completed = 0, failed = 0;
+      for (const t of all) {
+        if (t.status === 'completed') completed++;
+        else if (t.status === 'failed') failed++;
+      }
+      setCompletedCount(completed);
+      setFailedCount(failed);
+      setStreak(Math.max(0, completed - failed));
+    } catch {
       setAllActiveTasks([]);
     } finally {
       setLoading(false);
@@ -208,785 +132,585 @@ export default function DashboardScreen() {
     }
   }, [user]);
 
-  // Habits temporarily disabled
-  // // Fetch habits for the user
-  // const fetchHabits = useCallback(async () => {
-  //   if (!user) return;
-  //   const userHabits = await habitService.getHabits(user.id);
-  //   setHabits(userHabits);
-  // }, [user]);
+  useFocusEffect(useCallback(() => { fetchTasks(); }, [fetchTasks]));
 
-  useFocusEffect(
-    useCallback(() => {
-      fetchTasks();
-      // fetchHabits(); // Habits temporarily disabled
-    }, [fetchTasks])
-  );
-
-  // useEffect(() => {
-  //   fetchHabits();
-  // }, [fetchHabits]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchTasks();
-  }, [fetchTasks]);
+  useEffect(() => { fetchTasks(); }, [fetchTasks, refreshFlag]);
 
   useEffect(() => {
-    console.log('Dashboard: useEffect triggered with refreshFlag:', refreshFlag);
-    fetchTasks();
-  }, [fetchTasks, refreshFlag]);
+    if (params.refresh) fetchTasks();
+  }, [params.refresh]);
 
   useEffect(() => {
     if (!user) return;
-    console.log('Dashboard: Fetching focus stats for user:', user.id);
-    focusService.getStats(user.id).then(stats => {
-      console.log('Dashboard: Focus stats received:', stats);
-      setFocusStats(stats);
-    });
+    focusService.getStats(user.id).then(s => setFocusStats(s));
   }, [user, refreshFlag]);
 
-  // Calculate streak: completed tasks minus failed tasks, minimum 0
-  useEffect(() => {
-    if (!user) return;
-    console.log('Dashboard: Calculating streak for user:', user.id);
-    (async () => {
-      const allTasks = await offlineTaskService.getTasks(user.id);
-      let completed = 0;
-      let failed = 0;
-      
-      // Count completed and failed tasks (ignore pending tasks)
-      for (let i = 0; i < allTasks.length; i++) {
-        const task = allTasks[i];
-        if (task.status === 'completed') {
-          completed++;
-        } else if (task.status === 'failed') {
-          failed++;
-        }
-        // Skip pending tasks as they don't affect the streak
-      }
-      
-      // Calculate streak: completed - failed, minimum 0
-      const currentStreak = Math.max(0, completed - failed);
-      
-      setCompletedCount(completed);
-      setFailedCount(failed);
-      setStreak(currentStreak);
-      
-      console.log('Dashboard: Streak calculation:', {
-        completed,
-        failed,
-        streak: currentStreak,
-        rawCalculation: completed - failed,
-        totalTasks: allTasks.length
-      });
-    })();
-  }, [user, refreshFlag]);
+  // ── Derived values ────────────────────────────────────────────────────────────
+  const { totalXP, level, xpInLevel } = getXPInfo(completedCount);
 
-  // Add delete task handler
-  const handleDeleteTask = async (taskId: string) => {
-    console.log('Dashboard: handleDeleteTask called with taskId:', taskId);
+  const sortedTasks = allActiveTasks.slice().sort((a, b) => {
+    if (a.priority !== b.priority) return b.priority - a.priority;
+    const ia = taskOrder.indexOf(a.id), ib = taskOrder.indexOf(b.id);
+    if (ia !== -1 && ib !== -1) return ia - ib;
+    return 0;
+  });
+
+  const todayTaskCount = sortedTasks.filter(t => t.deadline && isToday(t.deadline)).length;
+  const focusMinutes = Math.round(focusStats.total_duration / 60);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────────
+  const handleTaskStatus = async (task: Task, status: 'completed' | 'failed') => {
     try {
-      // The offlineTaskService.deleteTask now handles subtask deletion automatically
-      console.log('Dashboard: Calling offlineTaskService.deleteTask...');
-      await offlineTaskService.deleteTask(taskId);
-      console.log('Dashboard: Task deleted successfully');
-      
-      // Refresh the task list
-      console.log('Dashboard: Triggering refresh with setRefreshFlag');
+      await offlineTaskService.updateTaskStatus(task.id, status);
+      setSelectedTask(null);
       setRefreshFlag(f => !f);
-      console.log('Dashboard: Refresh flag updated');
-    } catch (error) {
-      console.error('Dashboard: Error deleting task:', error);
-    }
+    } catch {}
   };
 
-  // Add delete subtask handler
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await offlineTaskService.deleteTask(taskId);
+      setRefreshFlag(f => !f);
+    } catch {}
+  };
+
   const handleDeleteSubtask = async (subtaskId: string) => {
     try {
       await offlineTaskService.deleteTask(subtaskId);
       setRefreshFlag(f => !f);
-    } catch (error) {
-      console.error('Error deleting subtask:', error);
-    }
-  };
-
-  // Sort tasks by priority (highest first), then by custom order if set
-  const sortedTasks = allActiveTasks
-    .slice()
-    .sort((a, b) => {
-      if (a.priority !== b.priority) return b.priority - a.priority;
-      // If custom order exists, use it
-      const idxA = taskOrder.indexOf(a.id);
-      const idxB = taskOrder.indexOf(b.id);
-      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-      return 0;
-    });
-
-  // Move task to previous (completed/failed) by updating its status
-  const handleTaskStatus = async (task: Task, status: 'completed' | 'failed') => {
-    try {
-      await offlineTaskService.updateTaskStatus(task.id, status);
-      setShowModal(false);
-      setSelectedTask(null);
-      setRefreshFlag(f => !f); // trigger refresh
-    } catch (e) {}
+    } catch {}
   };
 
   const toggleSubtasks = (taskId: string) => {
     setExpandedTasks(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(taskId)) {
-        newSet.delete(taskId);
-      } else {
-        newSet.add(taskId);
-      }
-      return newSet;
+      const next = new Set(prev);
+      next.has(taskId) ? next.delete(taskId) : next.add(taskId);
+      return next;
     });
   };
 
-  // Handler for opening the task modal
-  const handleTaskCardPress = useCallback((task: Task) => {
+  const handleTaskPress = (task: Task) => {
+    if (selectedTaskToSwap !== null) return;
     setSelectedTask(task);
-    setShowModal(true);
-  }, []);
+  };
 
+  const handleLongPress = (index: number) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSelectedTaskToSwap(index);
+  };
+
+  const handleSwapPress = (index: number) => {
+    if (selectedTaskToSwap === null) return;
+    if (selectedTaskToSwap !== index) {
+      const next = [...sortedTasks];
+      [next[selectedTaskToSwap], next[index]] = [next[index], next[selectedTaskToSwap]];
+      setAllActiveTasks(next);
+      setTaskOrder(next.map(t => t.id));
+    }
+    setSelectedTaskToSwap(null);
+  };
+
+  // ── Guards ────────────────────────────────────────────────────────────────────
   if (authLoading) return null;
-  if (!session?.user) {
-    router.replace('/(auth)/login');
-    return null;
-  }
+  if (!session?.user) { router.replace('/(auth)/login'); return null; }
 
-  // Filter today's tasks for events section
-  const todaysEvents = tasks;
-  const numEvents = todaysEvents.length;
-  const mainEvent = todaysEvents[0];
-
-  const TaskCardAnimated = ({ item, index, isSelected, onLongPress, onPress }) => {
-    const animatedStyle = useAnimatedStyle(() => ({
-      transform: [
-        { scale: withSpring(isSelected ? 1.08 : 1) },
-        { translateY: withSpring(isSelected ? -8 : 0) },
-        { translateX: withSpring(isSelected ? 4 : 0) },
-        { rotateZ: isSelected ? '-2deg' : '0deg' },
-      ] as any,
-    }));
-
-    // Use calendar card layout
-    return (
-      <TouchableOpacity
-        activeOpacity={0.85}
-        onLongPress={onLongPress}
-        onPress={onPress}
-        style={{ width: '100%', marginBottom: 14 }}
-      >
-        <Animated.View style={[
-          styles.taskCard,
-          animatedStyle,
-          { zIndex: isSelected ? 20 : 1 },
-          isSelected && { borderWidth: 2, borderColor: '#7B61FF' },
-        ]}>
-          <Card style={[styles.eventCard, { borderLeftColor: getPriorityColor(item.priority) }]}> 
-            <Card.Content style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <View style={[styles.eventPriorityDot, { backgroundColor: getPriorityColor(item.priority) }]} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.eventTitle}>{item.title}</Text>
-                <Text style={styles.eventTime}>{item.startTime && item.endTime ? `${formatTime(item.startTime)} - ${formatTime(item.endTime)}` : 'All day'}</Text>
-                {item.description && (
-                  <Text style={styles.eventDescription} numberOfLines={2}>{item.description}</Text>
-                )}
-              </View>
-            </Card.Content>
-          </Card>
-        </Animated.View>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderTaskItem = ({ item, index }) => {
-    const isSelected = selectedTaskToSwap === index;
-
-    const handleLongPress = () => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setSelectedTaskToSwap(index);
-    };
-
-    const handlePress = () => {
-      if (selectedTaskToSwap !== null && selectedTaskToSwap !== index) {
-        // Swap tasks
-        const newTasks = [...sortedTasks];
-        const temp = newTasks[selectedTaskToSwap];
-        newTasks[selectedTaskToSwap] = newTasks[index];
-        newTasks[index] = temp;
-        setAllActiveTasks(newTasks);
-        setTaskOrder(newTasks.map(task => task.id));
-        setSelectedTaskToSwap(null);
-      } else if (selectedTaskToSwap === null) {
-        handleTaskCardPress(item);
-      } else {
-        setSelectedTaskToSwap(null); // Deselect if same
-      }
-    };
-
-    return (
-      <TaskCardAnimated
-        key={item.id}
-        item={item}
-        index={index}
-        isSelected={isSelected}
-        onLongPress={handleLongPress}
-        onPress={handlePress}
-      />
-    );
-  };
-
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
-      <ScrollView 
-        style={{ flex: 1, backgroundColor: theme.colors.background }}
-        contentContainerStyle={{ paddingBottom: BOTTOM_NAV_TOTAL_HEIGHT + 60 }}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
+    <View style={styles.root}>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={{ paddingBottom: BOTTOM_NAV_TOTAL_HEIGHT + 80 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchTasks(); }} tintColor={colors.gold} />}
       >
-        <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
-            <HamburgerMenu onPress={() => setSidebarVisible(true)} isOpen={sidebarVisible} />
-            <View style={styles.headerText}>
-              <Text style={styles.headerTitle}>Home</Text>
-              <Text style={styles.greeting}>Welcome! Let's get started!</Text>
-              <Text style={styles.subtext}>Here are your plans for today</Text>
-            </View>
+        {/* ── Header ── */}
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerLabel}>LIFE HQ</Text>
+            <Text style={styles.headerTitle}>Quest Log</Text>
+            <Text style={styles.headerSub}>
+              {new Date().toLocaleDateString('en', { month: 'short', year: 'numeric' })}
+            </Text>
           </View>
-          <View style={styles.headerActions}>
-            <UserAvatar
-              size={48}
-              showBorder={true}
-              borderColor="#7B61FF"
-            />
+          <View style={styles.headerRight}>
+            <TouchableOpacity onLongPress={() => setSidebarVisible(true)}>
+              <View style={styles.levelBadge}>
+                <Text style={styles.levelText}>LVL {level}</Text>
+              </View>
+              <Text style={styles.xpTotal}>{totalXP} XP total</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
+        {/* ── XP Bar ── */}
+        <View style={styles.xpBarContainer}>
+          <View style={styles.xpBarRow}>
+            <Text style={styles.xpBarLabel}>Level progress</Text>
+            <Text style={styles.xpBarValue}>{xpInLevel} / {XP_PER_LEVEL} XP</Text>
+          </View>
+          <Bar value={xpInLevel} max={XP_PER_LEVEL} color={colors.gold} height={5} />
+        </View>
+
+        {/* ── Stats Row ── */}
         <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <IconButton icon="clock-outline" size={20} iconColor={theme.colors.primary} style={styles.statIcon} />
-            <Text style={styles.statValue}>{Math.floor(focusStats.total_duration / 60)}h {focusStats.total_duration % 60}m</Text>
-          </View>
-          {/* Streak Box */}
-          <View style={[
-            styles.streakCard, 
-            streak >= 3 && styles.streakCardGlow,
-            failedCount > 0 && streak === 0 && styles.streakCardFailed
-          ]}>
-            <View style={styles.streakContent}>
-              <RNAnimated.Text
-                style={[
-                  styles.streakFire,
-                  streak >= 3 && styles.streakFireGlow,
-                  failedCount > 0 && streak === 0 && styles.streakFireFailed
-                ]}
-              >
-                {failedCount > 0 && streak === 0 ? '💔' : '🔥'}
-              </RNAnimated.Text>
-              <View style={styles.streakTextContainer}>
-                <Text style={styles.streakValue}>{streak}</Text>
-                <Text style={styles.streakLabel}>Streak</Text>
-                {failedCount > 0 && (
-                  <Text style={styles.streakSubtext}>
-                    -{failedCount} failed
-                  </Text>
-                )}
-              </View>
+          {[
+            { val: totalXP > 0 ? `+${Math.min(completedCount, 9) * XP_PER_TASK}` : '0', label: 'today XP', color: colors.gold },
+            { val: `${completedCount}/${completedCount + sortedTasks.length}`, label: 'tasks done', color: colors.green },
+            { val: fmtFocusTime(focusMinutes), label: 'focus time', color: colors.blue },
+            { val: String(streak), label: streak === 1 ? 'day streak' : 'streak', color: colors.pink },
+          ].map(({ val, label, color }) => (
+            <View key={label} style={styles.statCard}>
+              <Text style={[styles.statVal, { color }]}>{val}</Text>
+              <Text style={styles.statLabel}>{label}</Text>
             </View>
+          ))}
+        </View>
+
+        {/* ── Today Banner ── */}
+        {todayTaskCount > 0 && (
+          <View style={styles.todayBanner}>
+            <Text style={styles.todayText}>
+              {todayTaskCount} {todayTaskCount === 1 ? 'quest' : 'quests'} due today
+            </Text>
           </View>
+        )}
+
+        {/* ── Section label ── */}
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionLabel}>ACTIVE QUESTS</Text>
+          <Text style={styles.sectionCount}>{sortedTasks.filter(t => !t.parent_task_id).length}</Text>
         </View>
 
-        {/* Events of Today Section - now also shows today's habits */}
-        <Card style={styles.eventCard}>
-          <Card.Content>
-            {numEvents > 0 ? (
-              <>
-                <Text style={styles.eventTitle}>YOU HAVE {numEvents} {numEvents === 1 ? 'EVENT' : 'EVENTS'} TODAY</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
-                  <Text style={styles.eventMain}>{mainEvent.title}</Text>
-                  <Text style={styles.eventNow}>now</Text>
-                </View>
-                {mainEvent.deadline && (
-                  <Text style={styles.eventTime}>
-                    {(() => {
-                      try {
-                        const date = parseDate(mainEvent.deadline);
-                        return date.toLocaleDateString();
-                      } catch (error) {
-                        console.error('Error formatting event time:', error);
-                        return 'Today';
-                      }
-                    })()}
-                  </Text>
-                )}
-                {mainEvent.description && (
-                  <Text style={styles.eventDescription} numberOfLines={2}>
-                    {mainEvent.description}
-                  </Text>
-                )}
-              </>
-            ) : (
-              <>
-                <Text style={styles.eventTitle}>No events for today</Text>
-                <Text style={styles.eventDescription}>
-                  Create a task with today's date to see it here
-                </Text>
-              </>
-            )}
-            {/* Habits for today - temporarily disabled */}
-          </Card.Content>
-        </Card>
+        {/* ── Task List ── */}
+        {loading ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyText}>Loading quests...</Text>
+          </View>
+        ) : sortedTasks.filter(t => !t.parent_task_id).length === 0 ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>Your quest log is empty</Text>
+            <Text style={styles.emptyText}>Add a task to get started</Text>
+          </View>
+        ) : (
+          <View style={styles.taskList}>
+            {sortedTasks.map((task, index) => {
+              if (task.parent_task_id) return null;
+              const { color: pColor, label: pLabel } = getPriority(task.priority);
+              const isSelected = selectedTaskToSwap === index;
+              const subtasks = sortedTasks.filter(t => t.parent_task_id === task.id);
+              const completedSubs = subtasks.filter(t => t.status === 'completed').length;
 
-        {/* Habits Section - temporarily disabled */}
+              return (
+                <TouchableOpacity
+                  key={task.id}
+                  activeOpacity={0.85}
+                  onLongPress={() => handleLongPress(index)}
+                  onPress={() => selectedTaskToSwap !== null ? handleSwapPress(index) : handleTaskPress(task)}
+                  style={[
+                    styles.taskCard,
+                    isSelected && { borderColor: colors.gold, borderWidth: 1.5 },
+                  ]}
+                >
+                  {/* Priority stripe */}
+                  <View style={[styles.priorityStripe, { backgroundColor: pColor }]} />
 
-        {/* Task Section: show all active tasks with subtask support */}
-        <View style={styles.taskSectionContainer}>
-          <Text style={styles.taskSectionTitle}>All Tasks ({sortedTasks.length})</Text>
-          <ScrollView 
-            style={styles.taskScrollContainer}
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled={true}
-          >
-            {loading ? (
-              <Text style={styles.noTasks}>Loading tasks...</Text>
-            ) : sortedTasks.length === 0 ? (
-              <View style={styles.noTasksContainer}>
-                <Text style={styles.noTasks}>No active tasks.</Text>
-                <Text style={styles.noTasksSubtext}>
-                  Create a new task to get started
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.taskListContainer}>
-                {sortedTasks.map((task) => {
-                  // Skip subtasks as they'll be shown under their parent
-                  if (task.parent_task_id) return null;
-                  
-                  return (
-                    <TaskCardWithSubtasks
-                      key={task.id}
-                      task={task}
-                      allTasks={sortedTasks}
-                      variant="dashboard"
-                      onStatusChange={(taskId, status) => {
-                        const taskToUpdate = sortedTasks.find(t => t.id === taskId);
-                        if (taskToUpdate) {
-                          handleTaskStatus(taskToUpdate, status as 'completed' | 'failed');
-                        }
-                      }}
-                      onPress={handleTaskCardPress}
-                      expanded={expandedTasks.has(task.id)}
-                      onToggleExpand={toggleSubtasks}
-                      onDelete={handleDeleteTask}
-                      onDeleteSubtask={handleDeleteSubtask}
-                    />
-                  );
-                })}
-              </View>
-            )}
-          </ScrollView>
-        </View>
-        <Portal>
-          <Modal visible={showModal} onDismiss={() => setShowModal(false)} contentContainerStyle={styles.modalContainer}>
-            {selectedTask && (
-              <Card style={styles.detailCard}>
-                <Card.Title title={selectedTask.title} />
-                <Card.Content>
-                  <Text style={{ marginBottom: 8 }}>{selectedTask.description}</Text>
-                  <Text>Status: {selectedTask.status}</Text>
-                  {selectedTask.deadline && (
-                    <Text style={{ marginTop: 4 }}>Date: {(() => {
-                      const date = parseDate(selectedTask.deadline);
-                      return date.toLocaleDateString();
-                    })()}</Text>
-                  )}
-                  {selectedTask.activities && selectedTask.activities.length > 0 && (
-                    <View style={styles.modalActivitiesContainer}>
-                      <Text style={styles.modalActivitiesTitle}>Activities:</Text>
-                      <View style={styles.modalActivitiesList}>
-                        {selectedTask.activities.map((activityKey, idx) => {
-                          const activity = ACTIVITY_OPTIONS.find(a => a.key === activityKey);
-                          return activity ? (
-                            <View key={idx} style={styles.modalActivityItem}>
-                              <Text style={styles.modalActivityEmoji}>{activity.emoji}</Text>
-                              <Text style={styles.modalActivityLabel}>{activity.label}</Text>
-                            </View>
-                          ) : null;
-                        })}
+                  <View style={styles.taskBody}>
+                    {/* Title row */}
+                    <View style={styles.taskTitleRow}>
+                      <Text style={styles.taskTitle} numberOfLines={1}>{task.title}</Text>
+                      <View style={[styles.priorityPill, { backgroundColor: pColor + '22' }]}>
+                        <Text style={[styles.priorityPillText, { color: pColor }]}>{pLabel}</Text>
                       </View>
                     </View>
-                  )}
-                </Card.Content>
-                <Card.Actions>
-                  <Button mode="contained" onPress={() => handleTaskStatus(selectedTask, 'completed')} style={{ backgroundColor: '#4caf50', marginRight: 8 }}>Completed</Button>
-                  <Button mode="contained" onPress={() => handleTaskStatus(selectedTask, 'failed')} style={{ backgroundColor: '#ff5252' }}>Failed</Button>
-                  <Button onPress={() => setShowModal(false)}>Close</Button>
-                </Card.Actions>
-              </Card>
-            )}
-          </Modal>
-        </Portal>
+
+                    {/* Description */}
+                    {task.description ? (
+                      <Text style={styles.taskDesc} numberOfLines={2}>{task.description}</Text>
+                    ) : null}
+
+                    {/* Meta row */}
+                    <View style={styles.taskMeta}>
+                      {task.deadline && <DeadlinePill deadline={task.deadline} />}
+                      {subtasks.length > 0 && (
+                        <Text style={styles.subTaskCount}>{completedSubs}/{subtasks.length} steps</Text>
+                      )}
+                    </View>
+
+                    {/* Subtask progress bar */}
+                    {subtasks.length > 0 && (
+                      <View style={{ marginTop: 8 }}>
+                        <Bar value={completedSubs} max={subtasks.length} color={pColor} height={3} />
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </ScrollView>
+
+      {/* ── Task Detail Modal ── */}
+      <Portal>
+        <Modal
+          visible={!!selectedTask}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setSelectedTask(null)}
+        >
+          <Pressable style={styles.modalOverlay} onPress={() => setSelectedTask(null)}>
+            <Pressable style={styles.modalBox} onPress={e => e.stopPropagation()}>
+              {selectedTask && (
+                <>
+                  <View style={styles.modalHeader}>
+                    <View style={[styles.modalStripe, { backgroundColor: getPriority(selectedTask.priority).color }]} />
+                    <Text style={styles.modalTitle}>{selectedTask.title}</Text>
+                  </View>
+                  {selectedTask.description ? (
+                    <Text style={styles.modalDesc}>{selectedTask.description}</Text>
+                  ) : null}
+                  {selectedTask.deadline && (
+                    <Text style={styles.modalMeta}>
+                      Due: {parseDate(selectedTask.deadline).toLocaleDateString('en', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </Text>
+                  )}
+                  <View style={styles.modalActions}>
+                    <TouchableOpacity
+                      style={[styles.modalBtn, { backgroundColor: colors.green }]}
+                      onPress={() => handleTaskStatus(selectedTask, 'completed')}
+                    >
+                      <Text style={styles.modalBtnText}>Complete</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalBtn, { backgroundColor: colors.error }]}
+                      onPress={() => handleTaskStatus(selectedTask, 'failed')}
+                    >
+                      <Text style={styles.modalBtnText}>Failed</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.modalBtn, { backgroundColor: colors.surfaceHighlight }]}
+                      onPress={() => setSelectedTask(null)}
+                    >
+                      <Text style={[styles.modalBtnText, { color: colors.textMuted }]}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </Pressable>
+          </Pressable>
+        </Modal>
+      </Portal>
+
       <BottomNavBar />
+
       {/* Chat FAB */}
       <FAB
         icon="chat"
         style={styles.chatFab}
         onPress={() => router.push('/(app)/chat')}
-        color="#fff"
+        color={colors.background}
       />
+
       <OfflineIndicator />
-      
-      {/* Dashboard Sidebar */}
-      <Sidebar 
-        isVisible={sidebarVisible} 
-        onClose={() => setSidebarVisible(false)} 
-      />
+
+      <Sidebar isVisible={sidebarVisible} onClose={() => setSidebarVisible(false)} />
     </View>
   );
 }
 
-function formatEventTime(deadline: string) {
-  const date = parseDate(deadline);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
+// ─── Styles ─────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  headerRow: {
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  scroll: {
+    flex: 1,
+  },
+
+  // Header
+  header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingHorizontal: 20,
-    paddingTop: 32,
-    paddingBottom: 8,
+    paddingTop: 52,
+    paddingBottom: 14,
+    borderBottomWidth: 0.5,
+    borderBottomColor: colors.surfaceHighlight,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  headerText: {
-    marginLeft: 12,
-    flex: 1,
+  headerLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    marginBottom: 2,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#222',
-    marginBottom: 4,
-  },
-  greeting: {
     fontSize: 22,
-    fontWeight: 'bold',
-    color: '#222',
-    letterSpacing: 1.2,
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
-  subtext: {
-    color: '#888',
-    fontSize: 14,
+  headerSub: {
+    fontSize: 10,
+    color: colors.textMuted,
     marginTop: 2,
   },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 12,
-    gap: 16,
+  headerRight: {
+    alignItems: 'flex-end',
   },
-  statCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginRight: 12,
+  levelBadge: {
+    backgroundColor: colors.goldDim,
+    borderRadius: 99,
+    paddingHorizontal: 12,
+    paddingVertical: 3,
   },
-  statIcon: {
-    margin: 0,
-    marginRight: 4,
+  levelText: {
+    fontSize: 11,
+    color: colors.gold,
+    fontWeight: '600',
   },
-  statValue: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#222',
-  },
-  eventCard: {
-    marginBottom: 12,
-    borderRadius: 14,
-    backgroundColor: '#fff',
-    borderLeftWidth: 5,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-  },
-  eventPriorityDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    marginRight: 10,
-  },
-  eventTitle: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#222',
-  },
-  eventTime: {
-    fontSize: 13,
-    color: '#888',
-    marginTop: 2,
-  },
-  eventDescription: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-  eventMain: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#222',
-  },
-  eventNow: {
-    fontSize: 14,
-    color: '#7B61FF',
-    fontWeight: 'bold',
-    marginLeft: 8,
-  },
-  taskSectionContainer: {
-    paddingHorizontal: 20,
-    marginTop: 8,
-    marginBottom: 20,
-  },
-  taskSectionTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#222',
-    marginBottom: 12,
-  },
-  taskScrollContainer: {
-    maxHeight: 400, // Fixed height for scrollable area
-  },
-  taskListContainer: {
-    width: '100%',
-  },
-  taskGridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    marginTop: 8,
-    gap: 12,
-  },
-  taskCard: {
-    width: '100%',
-    marginBottom: 14,
-    borderRadius: 16,
-    backgroundColor: 'transparent',
-    minHeight: 72,
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  taskCardInner: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-  },
-  taskRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  taskIcon: {
-    backgroundColor: '#7B61FF',
-    marginRight: 14,
-  },
-  taskTextContainer: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  taskTitle: {
-    fontSize: 15,
-    color: '#222',
-    fontWeight: 'bold',
-  },
-  taskTime: {
-    fontSize: 13,
-    color: '#888',
-    marginTop: 2,
-  },
-  activitiesContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  xpTotal: {
+    fontSize: 10,
+    color: colors.textMuted,
+    textAlign: 'right',
     marginTop: 4,
   },
-  activityEmoji: {
-    fontSize: 16,
-    marginRight: 4,
+
+  // XP Bar
+  xpBarContainer: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 4,
   },
-  activityMore: {
-    fontSize: 12,
-    color: '#888',
-    fontWeight: 'bold',
-  },
-  taskCheckCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-    backgroundColor: '#fff',
-    marginLeft: 12,
-  },
-  noTasks: {
-    color: '#888',
-    fontSize: 16,
-    textAlign: 'center',
-    width: '100%',
-    marginTop: 24,
-  },
-  modalContainer: {
-    backgroundColor: 'white',
-    margin: 20,
-    borderRadius: 16,
-    padding: 0,
-  },
-  detailCard: {
-    borderRadius: 16,
-  },
-  modalActivitiesContainer: {
-    marginTop: 12,
-  },
-  modalActivitiesTitle: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#222',
-    marginBottom: 8,
-  },
-  modalActivitiesList: {
+  xpBarRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginBottom: 5,
+  },
+  xpBarLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+  xpBarValue: {
+    fontSize: 10,
+    color: colors.gold,
+  },
+
+  // Stats Row
+  statsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 16,
     gap: 8,
   },
-  modalActivityItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
+  statCard: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    paddingVertical: 9,
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+    alignItems: 'center',
   },
-  modalActivityEmoji: {
-    fontSize: 16,
-    marginRight: 4,
+  statVal: {
+    fontSize: 13,
+    fontWeight: '700',
   },
-  modalActivityLabel: {
+  statLabel: {
+    fontSize: 8,
+    color: colors.textMuted,
+    marginTop: 2,
+    textAlign: 'center',
+  },
+
+  // Today banner
+  todayBanner: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    backgroundColor: colors.goldDim,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: colors.gold + '44',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  todayText: {
     fontSize: 12,
-    color: '#666',
+    color: colors.gold,
+    fontWeight: '500',
   },
-  priorityDot: {
-    fontSize: 18,
-    marginRight: 6,
-    marginTop: 1,
-  },
-  headerActions: {
+
+  // Section header
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 10,
   },
-  streakCard: {
+  sectionLabel: {
+    fontSize: 10,
+    color: colors.textMuted,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  sectionCount: {
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+
+  // Task list
+  taskList: {
+    paddingHorizontal: 20,
+    gap: 10,
+    paddingBottom: 10,
+  },
+  taskCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  priorityStripe: {
+    width: 4,
+    borderRadius: 0,
+  },
+  taskBody: {
+    flex: 1,
+    padding: 12,
+  },
+  taskTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 16,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    marginRight: 12,
-    shadowColor: '#FFA726',
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-    minWidth: 80,
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 4,
+  },
+  taskTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    flex: 1,
+  },
+  priorityPill: {
+    borderRadius: 99,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  priorityPillText: {
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  taskDesc: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginBottom: 6,
+    lineHeight: 16,
+  },
+  taskMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  subTaskCount: {
+    fontSize: 9,
+    color: colors.textMuted,
+  },
+
+  // Empty state
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 48,
+    paddingHorizontal: 20,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginBottom: 6,
+  },
+  emptyText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
     justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
   },
-  streakCardGlow: {
-    backgroundColor: '#FFF8E1',
+  modalBox: {
+    backgroundColor: colors.surface,
+    borderRadius: 16,
+    borderWidth: 0.5,
+    borderColor: colors.border,
+    width: '100%',
+    maxWidth: 360,
+    overflow: 'hidden',
   },
-  streakCardFailed: {
-    backgroundColor: '#FFE1E1',
-    shadowColor: '#F44336',
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  streakFire: {
-    fontSize: 28,
-    textShadowColor: 'transparent',
-    textShadowRadius: 0,
-    textShadowOffset: { width: 0, height: 0 },
+  modalStripe: {
+    width: 4,
+    alignSelf: 'stretch',
   },
-  streakFireGlow: {
-    textShadowColor: '#FFA726',
-    textShadowRadius: 16,
-    textShadowOffset: { width: 0, height: 0 },
+  modalTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    flex: 1,
+    padding: 16,
   },
-  streakFireFailed: {
-    textShadowColor: '#F44336',
-    textShadowRadius: 8,
-    textShadowOffset: { width: 0, height: 0 },
+  modalDesc: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    paddingHorizontal: 20,
+    paddingBottom: 10,
+    lineHeight: 20,
   },
-  streakValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#FF9800',
+  modalMeta: {
+    fontSize: 11,
+    color: colors.textMuted,
+    paddingHorizontal: 20,
+    paddingBottom: 14,
   },
-  streakLabel: {
-    fontSize: 14,
-    color: '#888',
-    fontWeight: 'bold',
+  modalActions: {
+    flexDirection: 'row',
+    gap: 8,
+    padding: 16,
+    borderTopWidth: 0.5,
+    borderTopColor: colors.border,
   },
-  streakSubtext: {
+  modalBtn: {
+    flex: 1,
+    borderRadius: 8,
+    paddingVertical: 9,
+    alignItems: 'center',
+  },
+  modalBtnText: {
     fontSize: 12,
-    color: '#888',
-    fontWeight: 'bold',
+    fontWeight: '700',
+    color: colors.background,
   },
+
+  // FAB
   chatFab: {
     position: 'absolute',
     right: 24,
-    bottom: BOTTOM_NAV_TOTAL_HEIGHT + 20, // Position above BottomNavBar with spacing
-    backgroundColor: '#7B61FF',
+    bottom: BOTTOM_NAV_TOTAL_HEIGHT + 20,
+    backgroundColor: colors.purple,
     zIndex: 200,
     elevation: 6,
   },
-  noTasksContainer: {
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  noTasksSubtext: {
-    color: '#888',
-    fontSize: 14,
-    marginTop: 8,
-  },
-  streakContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  streakTextContainer: {
-    marginLeft: 8,
-  },
-}); 
+});

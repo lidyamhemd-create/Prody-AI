@@ -10,11 +10,11 @@ export const BOTTOM_NAV_PADDING = Platform.OS === 'ios' ? 18 : 10;
 export const BOTTOM_NAV_TOTAL_HEIGHT = BOTTOM_NAV_HEIGHT + BOTTOM_NAV_PADDING;
 
 const NAV_ITEMS = [
-  { icon: 'home-outline', label: 'Home',     route: 'dashboard',  color: colors.purple },
-  { icon: 'checkbox-multiple-blank-outline', label: 'Tasks', route: 'tasks', color: colors.gold },
-  { icon: 'calendar-month', label: 'Calendar', route: 'calendar', color: colors.green },
-  { icon: 'clock-outline',  label: 'Focus',    route: 'focus',     color: colors.blue },
-  { icon: 'chart-line',     label: 'Stats',    route: 'statistics', color: colors.pink },
+  { icon: 'home-outline',        label: 'Home',    route: 'dashboard',  color: colors.purple },
+  { icon: 'format-list-checks',  label: 'Daily',   route: 'tasks',      color: colors.gold },
+  { icon: 'timer-outline',       label: 'Focus',   route: 'focus',      color: colors.green },
+  { icon: 'leaf-outline',        label: 'Habits',  route: 'habits',     color: colors.blue },
+  { icon: 'trophy-outline',      label: 'Shelf',   route: 'statistics', color: colors.pink },
 ];
 
 function NavItem({ item, isActive, onPress }: { item: typeof NAV_ITEMS[0]; isActive: boolean; onPress: () => void }) {

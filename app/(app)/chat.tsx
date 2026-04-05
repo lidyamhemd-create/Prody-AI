@@ -27,25 +27,11 @@ const initialMessages: ChatMessage[] = [
   { id: '1', sender: 'bot', text: 'Hi! I am Prody. How can I help you today?\n\nI can:\n• Create tasks and add them to your calendar\n• Break down complex tasks into subtasks using AI\n• Update existing tasks\n• Help you plan your schedule\n\nTry saying: "Create subtasks for my project" or "Break down my homework" to get AI-generated subtasks!' },
 ];
 
-// DeepSeek API integration
-const DEEPSEEK_API_KEY = 'sk-0626ab8a919d49c9ab05abae965dd337';
-const DEEPSEEK_API_URL = 'https://api.deepseek.com/v1/chat/completions';
-
-// Optimized API configuration for faster responses
-const API_CONFIG = {
-  model: 'deepseek-chat',
-  temperature: 0.3, // Reduced from 0.7 for faster, more focused responses
-  max_tokens: 500, // Reduced from 1000 to limit response length
-  top_p: 0.9, // Add top_p for more focused sampling
-  frequency_penalty: 0.1, // Reduce repetition
-  presence_penalty: 0.1, // Encourage new topics
-  timeout: 10000 // 10 second timeout
-};
 
 // Height of the chat input bar (approx.) used for spacing the message list
 const INPUT_BAR_HEIGHT = 72;
 
-// Tool schemas for DeepSeek function calling
+// Tool schemas for function calling
 const TOOL_SCHEMAS = [
   {
     type: "function",
@@ -582,7 +568,7 @@ function isSubtaskIntent(userMessage: string): boolean {
   return subtaskKeywords.some(keyword => userMessage.toLowerCase().includes(keyword));
 }
 
-// AI-powered subtask generation using DeepSeek API
+// AI-powered subtask generation
 async function generateSubtasksWithAI(parentTaskTitle: string, parentTaskDescription: string, userId: string): Promise<{ title: string; description: string; priority: number }[]> {
   try {
     const prompt = `Please break down the following task into 3-7 logical subtasks that would help complete it effectively:
@@ -598,42 +584,7 @@ Please create subtasks that are:
 
 Return the subtasks in a structured format.`;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.timeout);
-
-    const response = await fetch(DEEPSEEK_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: API_CONFIG.model,
-        messages: [
-          { role: 'system', content: 'You are a productivity expert who specializes in breaking down complex tasks into manageable subtasks. Always respond with clear, actionable subtasks.' },
-          { role: 'user', content: prompt }
-        ],
-        temperature: API_CONFIG.temperature,
-        max_tokens: API_CONFIG.max_tokens,
-        top_p: API_CONFIG.top_p,
-        frequency_penalty: API_CONFIG.frequency_penalty,
-        presence_penalty: API_CONFIG.presence_penalty
-      }),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const aiResponse = data.choices?.[0]?.message?.content || '';
-
-    // Parse the AI response to extract subtasks
-    const subtasks = parseSubtasksFromAIResponse(aiResponse);
-    return subtasks;
+    throw new Error('AI subtask generation not configured');
   } catch (error) {
     console.error('AI subtask generation error:', error);
     // Fallback to basic subtasks
@@ -760,51 +711,7 @@ async function fetchAIResponseWithTaskExtraction(userMessage: string, history: {
       { role: 'user', content: userMessage }
     ];
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), API_CONFIG.timeout);
-
-    const apiResponse = await fetch(DEEPSEEK_API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: API_CONFIG.model,
-        messages,
-        temperature: API_CONFIG.temperature,
-        max_tokens: API_CONFIG.max_tokens,
-        top_p: API_CONFIG.top_p,
-        frequency_penalty: API_CONFIG.frequency_penalty,
-        presence_penalty: API_CONFIG.presence_penalty
-      }),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-    
-    if (!apiResponse.ok) {
-      const errorText = await apiResponse.text();
-      console.error('DeepSeek API error:', apiResponse.status, errorText);
-      logPerformance('apiError');
-      const cachedResponse = { text: `Sorry, there was an error with the API (${apiResponse.status}): ${errorText}`, suggestions: [] };
-      cacheResponse(userMessage, cachedResponse);
-      logPerformance('responseTime', Date.now() - startTime);
-      return cachedResponse;
-    }
-    
-    const data = await apiResponse.json();
-    console.log('DeepSeek API response:', JSON.stringify(data, null, 2));
-    const choice = data.choices && data.choices[0];
-    if (!choice) {
-      const cachedResponse = { text: 'Sorry, I could not get a response from the AI.', suggestions: [] };
-      cacheResponse(userMessage, cachedResponse);
-      logPerformance('responseTime', Date.now() - startTime);
-      return cachedResponse;
-    }
-
-    // Get AI response
-    const aiResponse = choice.message?.content?.trim() || 'Sorry, I could not get a response from the AI.';
+    throw new Error('AI chat not configured');
 
     // --- OVERWHELMED INTENT DETECTION ---
     if (isOverwhelmedIntent(userMessage)) {
@@ -1442,7 +1349,7 @@ export default function ChatScreen() {
       { id: String(prev.length + 2), sender: 'bot', text: 'Prody is thinking...', loading: true },
     ]);
     
-    // Call DeepSeek with text-based task extraction
+    // Call AI with text-based task extraction
     const aiReplyRaw = await fetchAIResponseWithTaskExtraction(userMsg, [
       ...messages,
       { sender: 'user', text: userMsg }

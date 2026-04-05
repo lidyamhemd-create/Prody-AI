@@ -1,4 +1,4 @@
-  import { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { offlineService, OfflineState } from '../services/offline/offlineService';
 
 export function useOffline() {
